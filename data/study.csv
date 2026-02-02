@@ -1,0 +1,2 @@
+Name,Log_Date,Productivity,Procrastination,Study_Time
+Type,current_date,integer,integer,duration
