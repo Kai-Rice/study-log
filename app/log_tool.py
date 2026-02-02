@@ -1,4 +1,4 @@
-# log-tool v0.2.0
+# log-tool v0.3.0
 
 from pathlib import Path
 from datetime import date
@@ -74,14 +74,70 @@ def validate_integer(value_str: str) -> int: # validates that a string can be co
     return parsed_int # return the parsed integer
 
 
+def parse_duration_to_seconds(value_str: str) -> int:
+    """
+    Parse a duration string into total seconds.
+
+    Accepted formats:
+      - "mm:ss"
+      - "hh:mm:ss"
+
+    Examples:
+      "30:00"    -> 1800
+      "01:15:30" -> 4530
+    """
+    parts = value_str.split(":")
+
+    if len(parts) == 2:
+        # mm:ss
+        mm_str, ss_str = parts
+        hh = 0
+        mm = int(mm_str)
+        ss = int(ss_str)
+    elif len(parts) == 3:
+        # hh:mm:ss
+        hh_str, mm_str, ss_str = parts
+        hh = int(hh_str)
+        mm = int(mm_str)
+        ss = int(ss_str)
+    else:
+        raise ValueError(
+            "Duration must be in mm:ss or hh:mm:ss format, "
+            f"got {value_str!r}"
+        )
+
+    if mm < 0 or mm >= 60 or ss < 0 or ss >= 60 or hh < 0:
+        raise ValueError(f"Invalid duration components in {value_str!r}")
+
+    return hh * 3600 + mm * 60 + ss
+
+
+def format_seconds_as_duration(total_seconds: int) -> str:
+    """
+    Format total seconds as 'hh:mm:ss'.
+    """
+    if total_seconds < 0:
+        raise ValueError("Duration cannot be negative.")
+
+    hh = total_seconds // 3600
+    remainder = total_seconds % 3600
+    mm = remainder // 60
+    ss = remainder % 60
+
+    return f"{hh:02d}:{mm:02d}:{ss:02d}"
+
+
 
 def log_item(item_name: str, value_str: str, log_date: str | None = None) -> None:
-   # Log an integer value for the given item_name on the given log_date.
     """
-    - If log_date is None, use today's date.
-    - Only supports Integer columns for now.
-    """
+    Log a value for the given item_name on the given log_date.
 
+    Supported types:
+      - integer  (SET behavior)
+      - duration (ADD behavior, stored as hh:mm:ss)
+
+    - If log_date is None, use today's date.
+    """
     # 1) Decide which date to log to
     if log_date is None:
         log_date = today_iso()
@@ -93,19 +149,10 @@ def log_item(item_name: str, value_str: str, log_date: str | None = None) -> Non
     log_date_col = find_column(headers, "Log_Date")
     item_col     = find_column(headers, item_name)
 
-    # 4) Ensure the column is Integer-typed
+    # 4) Look up the item type
     item_type = types[item_col]
-    if item_type != "Integer":
-        raise RuntimeError(
-            f"Column {item_name!r} has type {item_type!r}, "
-            "but this alpha only supports Integer columns."
-        )
 
-    # 5) Validate and normalize the value
-    value_int = validate_integer(value_str)
-    value     = str(value_int)  # store as text in CSV
-
-    # 6) Find or create the row for this log_date
+    # 5) Find or create the row for this log_date
     target_row = None
 
     for row in rows:
@@ -123,16 +170,45 @@ def log_item(item_name: str, value_str: str, log_date: str | None = None) -> Non
         target_row[log_date_col] = log_date
         rows.append(target_row)
 
-    # 7) Read previous value for that cell (for the message)
-    previous = target_row[item_col] or "N/A"
+    #    # 6) Dispatch based on type
+    if item_type == "integer":
+        # integer behavior: SET
+        value_int = validate_integer(value_str)
+        value     = str(value_int)
 
-    # 8) Update the cell
-    target_row[item_col] = value
+        previous = target_row[item_col] or "N/A"
+        target_row[item_col] = value
 
-    # 9) Save changes back to disk
+    elif item_type == "duration":
+        # Duration behavior: ADD to existing
+        added_seconds = parse_duration_to_seconds(value_str)
+
+        existing_str = target_row[item_col].strip() if target_row[item_col] else ""
+        if existing_str:
+            try:
+                existing_seconds = parse_duration_to_seconds(existing_str)
+            except ValueError:
+                # If the existing data is bad, treat as 0 for now
+                existing_seconds = 0
+        else:
+            existing_seconds = 0
+
+        new_total_seconds = existing_seconds + added_seconds
+        previous = format_seconds_as_duration(existing_seconds)
+        value    = format_seconds_as_duration(new_total_seconds)
+
+        target_row[item_col] = value
+
+    else:
+        raise RuntimeError(
+            f"Column {item_name!r} has unsupported type {item_type!r} "
+            "(supported: integer, duration)"
+        )
+
+    # 7) Save changes back to disk
     save_study_csv(headers, types, rows)
 
-    # 10) Feedback
+    # 8) Feedback
     print(f"log-tool: Updated {item_name} for {log_date}: (prev: {previous}) -> {value}")
 
 
