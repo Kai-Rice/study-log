@@ -1,4 +1,4 @@
-# study-log v0.1.0
+# log-tool v0.2.0
 
 from pathlib import Path
 from datetime import date
@@ -75,50 +75,98 @@ def validate_integer(value_str: str) -> int: # validates that a string can be co
 
 
 
-# def log_item(item_name: str, value_str: str) -> None:
-#     print(f"[log_item] would log: {item_name} = {value_str}")
+def log_item(item_name: str, value_str: str, log_date: str | None = None) -> None:
+   # Log an integer value for the given item_name on the given log_date.
+    """
+    - If log_date is None, use today's date.
+    - Only supports Integer columns for now.
+    """
 
-def log_item(item_name: str, value_str: str) -> None:
-    """
-    Temporary debug version:
-    - Load study.csv
-    - Show headers and types
-    - Show what we plan to log
-    """
+    # 1) Decide which date to log to
+    if log_date is None:
+        log_date = today_iso()
+
+    # 2) Load the CSV
     headers, types, rows = load_study_csv()
 
-    print("[log_item] Loaded study.csv")
-    print("  STUDY_FILE:", STUDY_FILE)
-    print("  Headers:", headers)
-    print("  Types:", types)
-    print(f"  Would log: {item_name} = {value_str}")
+    # 3) Find relevant columns
+    log_date_col = find_column(headers, "Log_Date")
+    item_col     = find_column(headers, item_name)
+
+    # 4) Ensure the column is Integer-typed
+    item_type = types[item_col]
+    if item_type != "Integer":
+        raise RuntimeError(
+            f"Column {item_name!r} has type {item_type!r}, "
+            "but this alpha only supports Integer columns."
+        )
+
+    # 5) Validate and normalize the value
+    value_int = validate_integer(value_str)
+    value     = str(value_int)  # store as text in CSV
+
+    # 6) Find or create the row for this log_date
+    target_row = None
+
+    for row in rows:
+        # Ensure row has enough columns (defensive)
+        if len(row) < len(headers):
+            row.extend([""] * (len(headers) - len(row)))
+
+        if row[log_date_col] == log_date:
+            target_row = row
+            break
+
+    if target_row is None:
+        # No row for this date yet → create one
+        target_row = [""] * len(headers)
+        target_row[log_date_col] = log_date
+        rows.append(target_row)
+
+    # 7) Read previous value for that cell (for the message)
+    previous = target_row[item_col] or "N/A"
+
+    # 8) Update the cell
+    target_row[item_col] = value
+
+    # 9) Save changes back to disk
+    save_study_csv(headers, types, rows)
+
+    # 10) Feedback
+    print(f"log-tool: Updated {item_name} for {log_date}: (prev: {previous}) -> {value}")
 
 
+def main() -> None:
+    args = sys.argv[1:]
 
-def main() -> None: # parsing + routing
-
-    args = sys.argv[1:] # skip script name
-
-    if len(args) == 0: # if no arguments are provided
-        print("Usage: python log_tool.py log <ItemName> <Value>")
+    # Basic command-line parsing
+    if len(args) == 0:
+        print("Usage: python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]")
         return
-   
-    command = args[0] # first argument is the command
 
-    if command == "log": # checks if the command is "log"
-        if len(args) != 3: # expects exactly 3 arguments for "log" command
-            print("Usage: python log_tool.py log <ItemName> <Value>")
+    command = args[0]
+
+    if command == "log":
+        if len(args) not in (3, 4):
+            print("Usage: python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]")
             return
-        
-        # unpacks the args list into variables
-        _, item_name, value_str = args
-        print(f"[main] command={command}, item_name={item_name}, value={value_str}")
 
-        # Call the core logic function
-        log_item(item_name, value_str)
+        _, item_name, value_str = args[0:3]
+        log_date = None
 
-    else: # unknown command
+        if len(args) == 4:
+            date_flag = args[3]  # expects something like -2026-02-01
+            if not date_flag.startswith("-"):
+                print("Date flag must start with '-' and use YYYY-MM-DD, e.g. -2026-02-01")
+                return
+            log_date = date_flag[1:]  # strip the leading '-'
+            # (Optional) validate format here with datetime.date.fromisoformat
+
+        log_item(item_name, value_str, log_date=log_date)
+
+    else:
         print(f"Unknown command: {command!r}. For now we only support 'log'.")
+
 
 
 if __name__ == "__main__":
