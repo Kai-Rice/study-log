@@ -1,7 +1,7 @@
-# log-tool v0.6.0
+# log-tool v0.6.1
 
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import csv
 import sys
 
@@ -21,7 +21,12 @@ def log_event(message: str) -> None:
     """
     Append a timestamped event line to log.txt.
     """
-    timestamp = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    # timezone-aware UTC timestamp
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # Normalize "+00:00" to "Z" for nicer display
+    if timestamp.endswith("+00:00"):
+        timestamp = timestamp[:-6] + "Z"
+
     line = f"{timestamp} {message}\n"
     with LOG_FILE.open("a", encoding="utf-8") as f:
         f.write(line)
@@ -462,7 +467,6 @@ def main() -> None:
         err_msg = f"log-tool: ERROR {type(e).__name__}: {e}"
         log_event(err_msg)
         print(err_msg)
-
 
 if __name__ == "__main__":
     main()
