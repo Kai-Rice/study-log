@@ -1,7 +1,7 @@
-# log-tool v0.5.0
+# log-tool v0.6.0
 
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 import csv
 import sys
 
@@ -10,10 +10,21 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR   = SCRIPT_DIR.parent
 DATA_DIR   = ROOT_DIR / "data"
 STUDY_FILE = DATA_DIR / "study.csv" # STUDY_FILE points to ~log-tool/data/study.csv
+LOG_FILE  = SCRIPT_DIR / "log.txt"
 
 
 def today_iso() -> str: # returns today's date as an ISO-formatted string (YYYY-MM-DD)
     return date.today().isoformat()
+
+
+def log_event(message: str) -> None:
+    """
+    Append a timestamped event line to log.txt.
+    """
+    timestamp = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    line = f"{timestamp} {message}\n"
+    with LOG_FILE.open("a", encoding="utf-8") as f:
+        f.write(line)
 
 
 def load_study_csv():
@@ -176,7 +187,6 @@ def format_seconds_as_duration(total_seconds: int) -> str:
     return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
 
-
 def log_item(item_name: str, value_str: str, log_date: str | None = None) -> None:
     """
     Log a value for the given item_name on the given log_date.
@@ -281,8 +291,10 @@ def log_item(item_name: str, value_str: str, log_date: str | None = None) -> Non
     # 8) Save changes back to disk
     save_study_csv(headers, types, rows)
 
-    # 9) Feedback
-    print(f"log-tool: Updated {item_name} for {log_date}: (prev: {previous}) -> {value}")
+    # 9) Log + feedback
+    msg = f"log-tool: Updated {item_name} for {log_date}: (prev: {previous}) -> {value}"
+    log_event(msg)
+    print(msg)
 
 
 def show_day(log_date: str | None = None) -> None:
@@ -309,7 +321,9 @@ def show_day(log_date: str | None = None) -> None:
             break
 
     if target_row is None:
-        print(f"log-tool: No data for {log_date} in {STUDY_FILE.name}")
+        msg = f"log-tool: No data for {log_date} in {STUDY_FILE.name}"
+        log_event(msg)
+        print(msg)
         return
 
     # Collect only non-empty cells (including "N/A")
@@ -320,62 +334,134 @@ def show_day(log_date: str | None = None) -> None:
             non_empty.append((h, cell))
 
     if not non_empty:
-        print(f"log-tool: No non-empty items for {log_date} in {STUDY_FILE.name}")
+        msg = f"log-tool: No non-empty items for {log_date} in {STUDY_FILE.name}"
+        log_event(msg)
+        print(msg)
         return
 
     # Align keys based on the longest header
     key_width = max(len(h) for h, _ in non_empty)
+
+    # Log a brief summary of the show operation
+    log_event(f"SHOW date={log_date} fields={len(non_empty)}")
 
     print(f"log-tool: Study log for {log_date}\n")
     for h, cell in non_empty:
         print(f"{h.ljust(key_width)} : {cell}")
 
 
+def show_history(limit: int = 10) -> None:
+    """
+    Print the last `limit` lines from log.txt (most recent events).
+    """
+    if not LOG_FILE.exists():
+        print(f"log-tool: No history yet (log file {LOG_FILE.name} does not exist).")
+        return
+
+    with LOG_FILE.open("r", encoding="utf-8") as f:
+        lines = f.read().splitlines()
+
+    if not lines:
+        print(f"log-tool: History is empty in {LOG_FILE.name}.")
+        return
+
+    tail = lines[-limit:]
+
+    print(f"log-tool: Last {len(tail)} event(s) from {LOG_FILE.name}:\n")
+    for line in tail:
+        print(line)
+
+
 def main() -> None:
     args = sys.argv[1:]
 
-    # Basic command-line parsing
-    if len(args) == 0:
-        print("Usage:")
-        print("  python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]")
-        print("  python3 log_tool.py show [YYYY-MM-DD]")
-        return
+    try:
+        # Log the raw command-line invocation
+        log_event(f"CMD args={args!r}")
 
-    command = args[0]
-
-    if command == "log":
-        if len(args) not in (3, 4):
-            print("Usage: python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]")
+        # Basic command-line parsing
+        if len(args) == 0:
+            msg = (
+                "Usage:\n"
+                "  python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]\n"
+                "  python3 log_tool.py show [YYYY-MM-DD]\n"
+                "  python3 log_tool.py history [N]"
+            )
+            print(msg)
+            log_event("INFO printed usage (no arguments)")
             return
 
-        _, item_name, value_str = args[0:3]
-        log_date = None
+        command = args[0]
 
-        if len(args) == 4:
-            date_flag = args[3]  # expects something like -2026-02-01
-            if not date_flag.startswith("-"):
-                print("Date flag must start with '-' and use YYYY-MM-DD, e.g. -2026-02-01")
+        if command == "log":
+            if len(args) not in (3, 4):
+                msg = "Usage: python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]"
+                print(msg)
+                log_event(f"ERROR {msg}")
                 return
-            log_date = date_flag[1:]  # strip the leading '-'
-            # (Optional) validate format here with datetime.date.fromisoformat
 
-        log_item(item_name, value_str, log_date=log_date)
+            _, item_name, value_str = args[0:3]
+            log_date = None
 
-    elif command == "show":
-        # Usage:
-        #   python3 log_tool.py show             -> show today's data
-        #   python3 log_tool.py show 2026-02-01  -> show data for that date
-        if len(args) == 1:
-            show_day()
-        elif len(args) == 2:
-            log_date = args[1]
-            # (Optional) validate date format here
-            show_day(log_date)
+            if len(args) == 4:
+                date_flag = args[3]  # expects something like -2026-02-01
+                if not date_flag.startswith("-"):
+                    msg = "Date flag must start with '-' and use YYYY-MM-DD, e.g. -2026-02-01"
+                    print(msg)
+                    log_event(f"ERROR {msg}")
+                    return
+                log_date = date_flag[1:]  # strip the leading '-'
+                # (Optional) validate format here with datetime.date.fromisoformat
+
+            log_item(item_name, value_str, log_date=log_date)
+
+        elif command == "show":
+            # Usage:
+            #   python3 log_tool.py show             -> show today's data
+            #   python3 log_tool.py show 2026-02-01  -> show data for that date
+            if len(args) == 1:
+                show_day()
+            elif len(args) == 2:
+                log_date = args[1]
+                # (Optional) validate date format here
+                show_day(log_date)
+            else:
+                msg = "Usage: python3 log_tool.py show [YYYY-MM-DD]"
+                print(msg)
+                log_event(f"ERROR {msg}")
+
+        elif command == "history":
+            # Usage:
+            #   python3 log_tool.py history       -> last 10 events
+            #   python3 log_tool.py history 20    -> last 20 events
+            if len(args) == 1:
+                show_history()
+            elif len(args) == 2:
+                try:
+                    n = int(args[1])
+                    if n <= 0:
+                        raise ValueError
+                except ValueError:
+                    msg = "history N requires a positive integer N, e.g. 'history 20'."
+                    print(msg)
+                    log_event(f"ERROR {msg}")
+                    return
+                show_history(n)
+            else:
+                msg = "Usage: python3 log_tool.py history [N]"
+                print(msg)
+                log_event(f"ERROR {msg}")
+
         else:
-            print("Usage: python3 log_tool.py show [YYYY-MM-DD]")
+            msg = f"Unknown command: {command!r}. For now we support 'log', 'show', and 'history'."
+            print(msg)
+            log_event(f"ERROR {msg}")
 
-    else:
-        print(f"Unknown command: {command!r}. For now we support 'log' and 'show'.")
+    except Exception as e:
+        # Catch anything unexpected so it also lands in log.txt
+        err_msg = f"log-tool: ERROR {type(e).__name__}: {e}"
+        log_event(err_msg)
+        print(err_msg)
 
 
 if __name__ == "__main__":
