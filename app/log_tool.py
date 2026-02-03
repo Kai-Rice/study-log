@@ -1,4 +1,4 @@
-# log-tool v0.3.0
+# log-tool v0.4.0
 
 from pathlib import Path
 from datetime import date
@@ -74,6 +74,55 @@ def validate_integer(value_str: str) -> int: # validates that a string can be co
     return parsed_int # return the parsed integer
 
 
+def is_na_input(value_str: str) -> bool:
+    """
+    Return True if the user explicitly wants to set this cell to N/A.
+    """
+    s = value_str.strip().lower()
+    return s in ("na", "n/a")
+
+
+def validate_boolean(value_str: str) -> str:
+    """
+    Validate a boolean input and return 'TRUE' or 'FALSE'.
+
+    Accepted (case-insensitive):
+      - truthy:  t, true, y, yes, 1
+      - falsy:   f, false, n, no, 0
+    """
+    s = value_str.strip().lower()
+
+    truthy = {"t", "true", "y", "yes", "1"}
+    falsy  = {"f", "false", "n", "no", "0"}
+
+    if s in truthy:
+        return "TRUE"
+    if s in falsy:
+        return "FALSE"
+
+    raise ValueError(
+        "Boolean value must be one of: t/f, true/false, y/n, yes/no, 1/0."
+    )
+
+
+def validate_int_range(value_str: str) -> int:
+    """
+    Validate a 1–10 rating (int_range). Return the integer value.
+
+    - Must be an integer
+    - Must be between 1 and 10 (inclusive)
+    """
+    try:
+        value_int = int(value_str)
+    except ValueError:
+        raise ValueError("int_range value must be an integer between 1 and 10.")
+
+    if not 1 <= value_int <= 10:
+        raise ValueError("int_range value must be between 1 and 10.")
+
+    return value_int
+
+
 def parse_duration_to_seconds(value_str: str) -> int:
     """
     Parse a duration string into total seconds.
@@ -127,16 +176,20 @@ def format_seconds_as_duration(total_seconds: int) -> str:
     return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
 
-
 def log_item(item_name: str, value_str: str, log_date: str | None = None) -> None:
     """
     Log a value for the given item_name on the given log_date.
 
     Supported types:
-      - integer  (SET behavior)
-      - duration (ADD behavior, stored as hh:mm:ss)
+      - integer   (SET behavior)
+      - duration  (ADD behavior, stored as hh:mm:ss)
+      - boolean   (SET behavior, stored as TRUE/FALSE)
+      - int_range (SET behavior, 1–10)
 
-    - If log_date is None, use today's date.
+    Special input:
+      - 'na' / 'n/a' sets the cell to 'N/A' regardless of type (for now).
+
+    If log_date is None, use today's date.
     """
     # 1) Decide which date to log to
     if log_date is None:
@@ -170,8 +223,14 @@ def log_item(item_name: str, value_str: str, log_date: str | None = None) -> Non
         target_row[log_date_col] = log_date
         rows.append(target_row)
 
-    #    # 6) Dispatch based on type
-    if item_type == "integer":
+    # 6) Handle 'na' / 'n/a' input first (applies to any type)
+    if is_na_input(value_str):
+        previous = target_row[item_col] or "N/A"
+        value    = "N/A"
+        target_row[item_col] = value
+
+    # 7) Dispatch based on type
+    elif item_type == "integer":
         # integer behavior: SET
         value_int = validate_integer(value_str)
         value     = str(value_int)
@@ -184,7 +243,7 @@ def log_item(item_name: str, value_str: str, log_date: str | None = None) -> Non
         added_seconds = parse_duration_to_seconds(value_str)
 
         existing_str = target_row[item_col].strip() if target_row[item_col] else ""
-        if existing_str:
+        if existing_str and existing_str != "N/A":
             try:
                 existing_seconds = parse_duration_to_seconds(existing_str)
             except ValueError:
@@ -199,16 +258,29 @@ def log_item(item_name: str, value_str: str, log_date: str | None = None) -> Non
 
         target_row[item_col] = value
 
+    elif item_type == "boolean":
+        # Boolean behavior: SET, stored as TRUE/FALSE
+        value = validate_boolean(value_str)
+        previous = target_row[item_col] or "N/A"
+        target_row[item_col] = value
+
+    elif item_type == "int_range":
+        # int_range behavior: SET, 1–10
+        value_int = validate_int_range(value_str)
+        value     = str(value_int)
+        previous = target_row[item_col] or "N/A"
+        target_row[item_col] = value
+
     else:
         raise RuntimeError(
             f"Column {item_name!r} has unsupported type {item_type!r} "
-            "(supported: integer, duration)"
+            "(supported: integer, duration, boolean, int_range)"
         )
 
-    # 7) Save changes back to disk
+    # 8) Save changes back to disk
     save_study_csv(headers, types, rows)
 
-    # 8) Feedback
+    # 9) Feedback
     print(f"log-tool: Updated {item_name} for {log_date}: (prev: {previous}) -> {value}")
 
 
@@ -242,7 +314,6 @@ def main() -> None:
 
     else:
         print(f"Unknown command: {command!r}. For now we only support 'log'.")
-
 
 
 if __name__ == "__main__":
