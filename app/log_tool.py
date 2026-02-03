@@ -1,4 +1,4 @@
-# log-tool v0.6.1
+# log-tool v0.7.0
 
 from pathlib import Path
 from datetime import date, datetime, timezone
@@ -30,6 +30,50 @@ def log_event(message: str) -> None:
     line = f"{timestamp} {message}\n"
     with LOG_FILE.open("a", encoding="utf-8") as f:
         f.write(line)
+
+
+def list_group_files() -> list[Path]:
+    """
+    Return a sorted list of all .csv files under DATA_DIR.
+    Each file is treated as a 'group' CSV.
+    """
+    if not DATA_DIR.exists():
+        raise RuntimeError(f"Data directory not found: {DATA_DIR}")
+
+    files = [p for p in DATA_DIR.glob("*.csv") if p.is_file()]
+    if not files:
+        raise RuntimeError(f"No group CSV files found in {DATA_DIR}")
+    return sorted(files)
+
+
+def load_group_csv(group_file: Path):
+    """
+    Load a specific group CSV and return (headers, types, rows).
+    """
+    if not group_file.exists():
+        raise RuntimeError(f"Group CSV not found: {group_file}")
+
+    with group_file.open("r", newline="", encoding="utf-8") as f:
+        reader = list(csv.reader(f))
+
+    if len(reader) < 2:
+        raise RuntimeError(f"{group_file.name} must have at least 2 rows (header + types).")
+
+    headers = reader[0]
+    types   = reader[1]
+    rows    = reader[2:]
+    return headers, types, rows
+
+
+def save_group_csv(group_file: Path, headers, types, rows) -> None:
+    """
+    Save (headers, types, rows) back to the given group CSV.
+    """
+    with group_file.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        writer.writerow(types)
+        writer.writerows(rows)
 
 
 def load_study_csv():
@@ -192,9 +236,59 @@ def format_seconds_as_duration(total_seconds: int) -> str:
     return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
 
+def find_item_location(item_name: str):
+    """
+    Search all group CSV files under DATA_DIR for a column named `item_name`.
+
+    Returns a tuple:
+      (group_file, headers, types, rows, item_col, log_date_col)
+
+    - group_file   : Path to the CSV file for that group
+    - headers      : header row list
+    - types        : type row list
+    - rows         : data rows list
+    - item_col     : index of the item column
+    - log_date_col : index of the 'Log_Date' column
+
+    For now, we require that item names are unique across all groups.
+    """
+    matches = []
+
+    for group_file in list_group_files():
+        headers, types, rows = load_group_csv(group_file)
+
+        if item_name in headers:
+            item_col = headers.index(item_name)
+            try:
+                log_date_col = headers.index("Log_Date")
+            except ValueError:
+                raise RuntimeError(f"{group_file.name} has no 'Log_Date' column.")
+
+            matches.append((group_file, headers, types, rows, item_col, log_date_col))
+
+    if not matches:
+        raise RuntimeError(
+            f"Item {item_name!r} not found in any group CSV in {DATA_DIR}."
+        )
+
+    if len(matches) > 1:
+        details = ", ".join(
+            f"{m[0].name} (col {m[4]})" for m in matches
+        )
+        raise RuntimeError(
+            f"Item {item_name!r} found in multiple group files: {details}. "
+            "This version requires item names to be unique across all groups."
+        )
+
+    return matches[0]
+
+
 def log_item(item_name: str, value_str: str, log_date: str | None = None) -> None:
     """
     Log a value for the given item_name on the given log_date.
+
+    - Searches across all group CSVs in DATA_DIR to find the column.
+    - Requires item names to be unique across all groups (for now).
 
     Supported types:
       - integer   (SET behavior)
@@ -211,17 +305,22 @@ def log_item(item_name: str, value_str: str, log_date: str | None = None) -> Non
     if log_date is None:
         log_date = today_iso()
 
-    # 2) Load the CSV
-    headers, types, rows = load_study_csv()
+    # 2) Find which group + column this item belongs to
+    (
+        group_file,
+        headers,
+        types,
+        rows,
+        item_col,
+        log_date_col,
+    ) = find_item_location(item_name)
 
-    # 3) Find relevant columns
-    log_date_col = find_column(headers, "Log_Date")
-    item_col     = find_column(headers, item_name)
+    group_name = group_file.stem
 
-    # 4) Look up the item type
+    # 3) Look up the item type
     item_type = types[item_col]
 
-    # 5) Find or create the row for this log_date
+    # 4) Find or create the row for this log_date
     target_row = None
 
     for row in rows:
@@ -239,13 +338,13 @@ def log_item(item_name: str, value_str: str, log_date: str | None = None) -> Non
         target_row[log_date_col] = log_date
         rows.append(target_row)
 
-    # 6) Handle 'na' / 'n/a' input first (applies to any type)
+    # 5) Handle 'na' / 'n/a' input first (applies to any type)
     if is_na_input(value_str):
         previous = target_row[item_col] or "N/A"
         value    = "N/A"
         target_row[item_col] = value
 
-    # 7) Dispatch based on type
+    # 6) Dispatch based on type
     elif item_type == "integer":
         # integer behavior: SET
         value_int = validate_integer(value_str)
@@ -289,70 +388,85 @@ def log_item(item_name: str, value_str: str, log_date: str | None = None) -> Non
 
     else:
         raise RuntimeError(
-            f"Column {item_name!r} has unsupported type {item_type!r} "
+            f"Column {item_name!r} in group {group_name!r} has unsupported type {item_type!r} "
             "(supported: integer, duration, boolean, int_range)"
         )
 
-    # 8) Save changes back to disk
-    save_study_csv(headers, types, rows)
+    # 7) Save changes back to disk (to that specific group file)
+    save_group_csv(group_file, headers, types, rows)
 
-    # 9) Log + feedback
-    msg = f"log-tool: Updated {item_name} for {log_date}: (prev: {previous}) -> {value}"
+    # 8) Log + feedback
+    msg = (
+        f"log-tool: Updated {item_name} in group {group_name} for {log_date}: "
+        f"(prev: {previous}) -> {value}"
+    )
     log_event(msg)
     print(msg)
 
 
 def show_day(log_date: str | None = None) -> None:
     """
-    Show the data row for a given log_date in study.csv.
+    Show the data rows for a given log_date across all group CSVs.
 
     - If log_date is None, use today's date.
-    - Only prints columns that have a non-empty value.
-    - Output is vertical: one "Name: Value" per line.
+    - For each group, only prints columns that have a non-empty value.
+    - Output is grouped by [Group: name], with vertical "Name: Value" lines.
     """
     if log_date is None:
         log_date = today_iso()
 
-    headers, types, rows = load_study_csv()
-    log_date_col = find_column(headers, "Log_Date")
+    groups_with_data: list[tuple[str, list[tuple[str, str]]]] = []
 
-    # Find the row for this date
-    target_row = None
-    for row in rows:
-        if len(row) < len(headers):
-            row.extend([""] * (len(headers) - len(row)))
-        if row[log_date_col] == log_date:
-            target_row = row
-            break
+    for group_file in list_group_files():
+        headers, types, rows = load_group_csv(group_file)
+        try:
+            log_date_col = headers.index("Log_Date")
+        except ValueError:
+            # Skip malformed group files with no Log_Date
+            continue
 
-    if target_row is None:
-        msg = f"log-tool: No data for {log_date} in {STUDY_FILE.name}"
+        # Find the row for this date
+        target_row = None
+        for row in rows:
+            if len(row) < len(headers):
+                row.extend([""] * (len(headers) - len(row)))
+            if row[log_date_col] == log_date:
+                target_row = row
+                break
+
+        if target_row is None:
+            continue  # no data for this date in this group
+
+        # Collect only non-empty cells (including "N/A")
+        non_empty = []
+        for h, v in zip(headers, target_row):
+            cell = v or ""
+            if cell != "":
+                non_empty.append((h, cell))
+
+        if not non_empty:
+            continue
+
+        group_name = group_file.stem
+        groups_with_data.append((group_name, non_empty))
+
+    if not groups_with_data:
+        msg = f"log-tool: No data for {log_date} in any group under {DATA_DIR}"
         log_event(msg)
         print(msg)
         return
-
-    # Collect only non-empty cells (including "N/A")
-    non_empty = []
-    for h, v in zip(headers, target_row):
-        cell = v or ""
-        if cell != "":
-            non_empty.append((h, cell))
-
-    if not non_empty:
-        msg = f"log-tool: No non-empty items for {log_date} in {STUDY_FILE.name}"
-        log_event(msg)
-        print(msg)
-        return
-
-    # Align keys based on the longest header
-    key_width = max(len(h) for h, _ in non_empty)
 
     # Log a brief summary of the show operation
-    log_event(f"SHOW date={log_date} fields={len(non_empty)}")
+    log_event(f"SHOW date={log_date} groups={len(groups_with_data)}")
 
-    print(f"log-tool: Study log for {log_date}\n")
-    for h, cell in non_empty:
-        print(f"{h.ljust(key_width)} : {cell}")
+    print(f"log-tool: Logs for {log_date}\n")
+
+    for group_name, non_empty in groups_with_data:
+        key_width = max(len(h) for h, _ in non_empty)
+        print(f"[Group: {group_name}]")
+        for h, cell in non_empty:
+            print(f"{h.ljust(key_width)} : {cell}")
+        print()  # blank line between groups
 
 
 def show_history(limit: int = 10) -> None:
@@ -467,6 +581,7 @@ def main() -> None:
         err_msg = f"log-tool: ERROR {type(e).__name__}: {e}"
         log_event(err_msg)
         print(err_msg)
+
 
 if __name__ == "__main__":
     main()
