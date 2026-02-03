@@ -1,4 +1,4 @@
-# log-tool v0.4.0
+# log-tool v0.5.0
 
 from pathlib import Path
 from datetime import date
@@ -176,6 +176,7 @@ def format_seconds_as_duration(total_seconds: int) -> str:
     return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
 
+
 def log_item(item_name: str, value_str: str, log_date: str | None = None) -> None:
     """
     Log a value for the given item_name on the given log_date.
@@ -284,12 +285,60 @@ def log_item(item_name: str, value_str: str, log_date: str | None = None) -> Non
     print(f"log-tool: Updated {item_name} for {log_date}: (prev: {previous}) -> {value}")
 
 
+def show_day(log_date: str | None = None) -> None:
+    """
+    Show the data row for a given log_date in study.csv.
+
+    - If log_date is None, use today's date.
+    - Only prints columns that have a non-empty value.
+    - Output is vertical: one "Name: Value" per line.
+    """
+    if log_date is None:
+        log_date = today_iso()
+
+    headers, types, rows = load_study_csv()
+    log_date_col = find_column(headers, "Log_Date")
+
+    # Find the row for this date
+    target_row = None
+    for row in rows:
+        if len(row) < len(headers):
+            row.extend([""] * (len(headers) - len(row)))
+        if row[log_date_col] == log_date:
+            target_row = row
+            break
+
+    if target_row is None:
+        print(f"log-tool: No data for {log_date} in {STUDY_FILE.name}")
+        return
+
+    # Collect only non-empty cells (including "N/A")
+    non_empty = []
+    for h, v in zip(headers, target_row):
+        cell = v or ""
+        if cell != "":
+            non_empty.append((h, cell))
+
+    if not non_empty:
+        print(f"log-tool: No non-empty items for {log_date} in {STUDY_FILE.name}")
+        return
+
+    # Align keys based on the longest header
+    key_width = max(len(h) for h, _ in non_empty)
+
+    print(f"log-tool: Study log for {log_date}\n")
+    for h, cell in non_empty:
+        print(f"{h.ljust(key_width)} : {cell}")
+
+
 def main() -> None:
     args = sys.argv[1:]
 
     # Basic command-line parsing
     if len(args) == 0:
-        print("Usage: python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]")
+        print("Usage:")
+        print("  python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]")
+        print("  python3 log_tool.py show [YYYY-MM-DD]")
         return
 
     command = args[0]
@@ -312,8 +361,21 @@ def main() -> None:
 
         log_item(item_name, value_str, log_date=log_date)
 
+    elif command == "show":
+        # Usage:
+        #   python3 log_tool.py show             -> show today's data
+        #   python3 log_tool.py show 2026-02-01  -> show data for that date
+        if len(args) == 1:
+            show_day()
+        elif len(args) == 2:
+            log_date = args[1]
+            # (Optional) validate date format here
+            show_day(log_date)
+        else:
+            print("Usage: python3 log_tool.py show [YYYY-MM-DD]")
+
     else:
-        print(f"Unknown command: {command!r}. For now we only support 'log'.")
+        print(f"Unknown command: {command!r}. For now we support 'log' and 'show'.")
 
 
 if __name__ == "__main__":
