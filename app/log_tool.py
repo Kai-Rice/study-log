@@ -6,12 +6,69 @@
 #   python3 log_tool.py show [YYYY-MM-DD]
 #   python3 log_tool.py history [N]
 #   python3 log_tool.py version
+#   python3 log_tool.py help
 
 import sys
 
 from config import VERSION
 from events import log_event, show_history
 from groups import log_item, show_day
+
+
+def print_usage() -> None:
+    """
+    Print a short usage summary.
+    """
+    msg = (
+        "Usage:\n"
+        "  python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]\n"
+        "  python3 log_tool.py show [YYYY-MM-DD]\n"
+        "  python3 log_tool.py history [N]\n"
+        "  python3 log_tool.py version\n"
+        "  python3 log_tool.py help\n"
+    )
+    print(msg)
+
+
+def print_help() -> None:
+    """
+    Print a more detailed help message.
+    """
+    msg = """log-tool command-line interface
+
+Commands:
+  log <ItemName> <Value> [-YYYY-MM-DD]
+      Log a value for an item. If no date is given, logs to today's date.
+
+  show [YYYY-MM-DD]
+      Show all non-empty values for the given date across all groups.
+
+  history [N]
+      Show the last N events from the internal log file (default: 10).
+
+  version
+      Show the current version.
+
+  help
+      Show this help message.
+
+Examples:
+  python3 log_tool.py log Study_Time 30:00
+  python3 log_tool.py log Mood 7 -2026-02-03
+  python3 log_tool.py show
+  python3 log_tool.py history 20
+"""
+    print(msg)
+    log_event("INFO printed help")
+
+
+def print_version() -> None:
+    """
+    Print the app version.
+    """
+    msg = f"log-tool {VERSION}"
+    print(msg)
+    log_event(f"INFO version {VERSION} printed")
 
 
 def main() -> None:
@@ -23,14 +80,7 @@ def main() -> None:
 
         # Basic command-line parsing
         if len(args) == 0:
-            msg = (
-                "Usage:\n"
-                "  python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]\n"
-                "  python3 log_tool.py show [YYYY-MM-DD]\n"
-                "  python3 log_tool.py history [N]\n"
-                "  python3 log_tool.py version"
-            )
-            print(msg)
+            print_usage()
             log_event("INFO printed usage (no arguments)")
             return
 
@@ -96,14 +146,15 @@ def main() -> None:
                 log_event(f"ERROR {msg}")
 
         elif command == "version":
-            msg = f"log-tool {VERSION}"
-            print(msg)
-            log_event(f"INFO version {VERSION} printed")
+            print_version()
+
+        elif command in ("help", "commands"):
+            print_help()
 
         else:
             msg = (
                 f"Unknown command: {command!r}. "
-                "For now we support 'log', 'show', 'history', and 'version'."
+                "Supported commands: 'log', 'show', 'history', 'version', 'help'."
             )
             print(msg)
             log_event(f"ERROR {msg}")
