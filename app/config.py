@@ -5,7 +5,8 @@ from pathlib import Path
 from datetime import date
 
 # Semantic version of the tool
-VERSION = "0.8.0"
+APP_NAME = "study-log"
+VERSION  = "0.9.0"
 
 # Paths
 SCRIPT_DIR = Path(__file__).resolve().parent
