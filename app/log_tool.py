@@ -5,8 +5,8 @@
 #   python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]
 #   python3 log_tool.py show [YYYY-MM-DD]
 #   python3 log_tool.py history [N]
-#   python3 log_tool.py version
-#   python3 log_tool.py help
+#   python3 log_tool.py version | -V | --version
+#   python3 log_tool.py help    | -h | --help
 
 import sys
 
@@ -24,8 +24,8 @@ def print_usage() -> None:
         "  python3 log_tool.py log <ItemName> <Value> [-YYYY-MM-DD]\n"
         "  python3 log_tool.py show [YYYY-MM-DD]\n"
         "  python3 log_tool.py history [N]\n"
-        "  python3 log_tool.py version\n"
-        "  python3 log_tool.py help\n"
+        "  python3 log_tool.py version | -V | --version\n"
+        "  python3 log_tool.py help    | -h | --help\n"
     )
     print(msg)
 
@@ -85,6 +85,16 @@ def main() -> None:
             return
 
         command = args[0]
+
+        # Handle common option-style flags
+        if command in ("-h", "--help"):
+            print_help()
+            log_event("INFO printed help (-h/--help)")
+            return
+
+        if command in ("-V", "--version"):
+            print_version()
+            return
 
         if command == "log":
             if len(args) not in (3, 4):
